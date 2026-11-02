@@ -1,0 +1,24 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+scrape_configs:
+  - job_name: hotelsphere-gateway
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['api-gateway:8080']
+  - job_name: hotelsphere-booking
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['booking-service:8091']
+  - job_name: hotelsphere-payment
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['payment-service:8092']
+  - job_name: hotelsphere-guest
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['guest-service:8093']
+  - job_name: hotelsphere-inventory
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['inventory-service:8094']

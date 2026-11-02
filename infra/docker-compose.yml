@@ -1,0 +1,326 @@
+services:
+  redis:
+    image: redis:7.4-alpine
+    container_name: ashkan-hotel-redis
+    command: ["sh", "-c", 'exec redis-server --appendonly yes --requirepass "$${REDIS_PASSWORD}"']
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-change-this-redis-password}
+    ports: ["127.0.0.1:6379:6379"]
+    volumes: ["redis_data:/data"]
+    healthcheck:
+      test: ["CMD-SHELL", 'redis-cli -a "$${REDIS_PASSWORD}" ping | grep -q PONG']
+      interval: 5s
+      timeout: 3s
+      retries: 15
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: ashkan-hotel-postgres
+    environment:
+      POSTGRES_USER: ${DB_USER:-hotel}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-change-this-database-password}
+      POSTGRES_DB: postgres
+    ports: ["127.0.0.1:5432:5432"]
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-hotel} -d postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    container_name: ashkan-hotel-rabbitmq
+    hostname: ashkan-hotel-rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-ashkan}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-change-this-local-password}
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  booking-service:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.service
+    command: ["com.ashkan.hotel.BookingMicroservice"]
+    environment:
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://otel-collector:4318/v1/traces
+      PORT: 8091
+      DATA_FILE: /app/data/bookings.tsv
+      JDBC_URL: jdbc:postgresql://postgres:5432/ashkan_booking
+      DB_USER: ${DB_USER:-hotel}
+      DB_PASSWORD: ${DB_PASSWORD:-change-this-database-password}
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-8}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-change-this-redis-password}
+      REDIS_CACHE_ENABLED: ${REDIS_CACHE_ENABLED:-true}
+      REDIS_TIMEOUT_MS: ${REDIS_TIMEOUT_MS:-250}
+      HOTEL_CACHE_TTL_SECONDS: ${HOTEL_CACHE_TTL_SECONDS:-30}
+      HOTEL_CACHE_MAX_ENTRIES: ${HOTEL_CACHE_MAX_ENTRIES:-1000}
+      EVENTS_ENABLED: ${EVENTS_ENABLED:-true}
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USER: ${RABBITMQ_USER:-ashkan}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-change-this-local-password}
+    ports: ["127.0.0.1:8091:8091"]
+    volumes: ["booking_data:/app/data"]
+    depends_on:
+      otel-collector: {condition: service_started}
+      rabbitmq: {condition: service_healthy}
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    restart: unless-stopped
+
+  payment-service:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.service
+    command: ["com.ashkan.hotel.PaymentMicroservice"]
+    environment:
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://otel-collector:4318/v1/traces
+      PORT: 8092
+      DATA_FILE: /app/data/payments.tsv
+      JDBC_URL: jdbc:postgresql://postgres:5432/ashkan_payment
+      DB_USER: ${DB_USER:-hotel}
+      DB_PASSWORD: ${DB_PASSWORD:-change-this-database-password}
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-8}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-change-this-redis-password}
+      REDIS_CACHE_ENABLED: ${REDIS_CACHE_ENABLED:-true}
+      REDIS_TIMEOUT_MS: ${REDIS_TIMEOUT_MS:-250}
+      HOTEL_CACHE_TTL_SECONDS: ${HOTEL_CACHE_TTL_SECONDS:-30}
+      HOTEL_CACHE_MAX_ENTRIES: ${HOTEL_CACHE_MAX_ENTRIES:-1000}
+      EVENTS_ENABLED: ${EVENTS_ENABLED:-true}
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USER: ${RABBITMQ_USER:-ashkan}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-change-this-local-password}
+    ports: ["127.0.0.1:8092:8092"]
+    volumes: ["payment_data:/app/data"]
+    depends_on:
+      otel-collector: {condition: service_started}
+      rabbitmq: {condition: service_healthy}
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    restart: unless-stopped
+
+  finance-dashboard:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.service
+    command: ["com.ashkan.hotel.FinancialDashboardHttpService", "8096"]
+    environment:
+      FINANCE_PORT: 8096
+      PAYMENT_JDBC_URL: jdbc:postgresql://postgres:5432/ashkan_payment
+      DB_USER: ${DB_USER:-hotel}
+      DB_PASSWORD: ${DB_PASSWORD:-change-this-database-password}
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-6}
+      JWT_SECRET: ${JWT_SECRET:-replace-with-a-random-value-at-least-32-characters}
+    ports: ["127.0.0.1:8096:8096"]
+    depends_on:
+      payment-service: {condition: service_started}
+      postgres: {condition: service_healthy}
+    restart: unless-stopped
+
+  guest-service:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.service
+    command: ["com.ashkan.hotel.GuestMicroservice"]
+    environment:
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://otel-collector:4318/v1/traces
+      PORT: 8093
+      DATA_FILE: /app/data/guests.tsv
+      JDBC_URL: jdbc:postgresql://postgres:5432/ashkan_guest
+      DB_USER: ${DB_USER:-hotel}
+      DB_PASSWORD: ${DB_PASSWORD:-change-this-database-password}
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-8}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-change-this-redis-password}
+      REDIS_CACHE_ENABLED: ${REDIS_CACHE_ENABLED:-true}
+      REDIS_TIMEOUT_MS: ${REDIS_TIMEOUT_MS:-250}
+      HOTEL_CACHE_TTL_SECONDS: ${HOTEL_CACHE_TTL_SECONDS:-30}
+      HOTEL_CACHE_MAX_ENTRIES: ${HOTEL_CACHE_MAX_ENTRIES:-1000}
+      EVENTS_ENABLED: ${EVENTS_ENABLED:-true}
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USER: ${RABBITMQ_USER:-ashkan}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-change-this-local-password}
+    ports: ["127.0.0.1:8093:8093"]
+    volumes: ["guest_data:/app/data"]
+    depends_on:
+      otel-collector: {condition: service_started}
+      rabbitmq: {condition: service_healthy}
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    restart: unless-stopped
+
+  guest-portal:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.service
+    command: ["com.ashkan.hotel.GuestPortalHttpService", "8085"]
+    environment:
+      PORTAL_PORT: 8085
+      PORTAL_BIND_HOST: 0.0.0.0
+      BOOKING_JDBC_URL: jdbc:postgresql://postgres:5432/ashkan_booking
+      GUEST_JDBC_URL: jdbc:postgresql://postgres:5432/ashkan_guest
+      PAYMENT_JDBC_URL: jdbc:postgresql://postgres:5432/ashkan_payment
+      PAYMENT_WEBHOOK_SECRET: ${PAYMENT_WEBHOOK_SECRET:-replace-this-with-a-random-secret-at-least-32-characters}
+      DB_USER: ${DB_USER:-hotel}
+      DB_PASSWORD: ${DB_PASSWORD:-change-this-database-password}
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-6}
+      GUEST_OTP_SECRET: ${GUEST_OTP_SECRET:-local-development-secret-change-before-deploy-2026}
+      PORTAL_COOKIE_SECURE: ${PORTAL_COOKIE_SECURE:-false}
+      OTP_DELIVERY_WEBHOOK_URL: ${OTP_DELIVERY_WEBHOOK_URL:-}
+      OTP_DELIVERY_WEBHOOK_TOKEN: ${OTP_DELIVERY_WEBHOOK_TOKEN:-}
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://otel-collector:4318/v1/traces
+    ports: ["8085:8085"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      booking-service: {condition: service_started}
+      guest-service: {condition: service_started}
+    restart: unless-stopped
+
+  inventory-service:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.service
+    command: ["com.ashkan.hotel.InventoryMicroservice"]
+    environment:
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://otel-collector:4318/v1/traces
+      PORT: 8094
+      DATA_FILE: /app/data/inventory.tsv
+      JDBC_URL: jdbc:postgresql://postgres:5432/ashkan_inventory
+      DB_USER: ${DB_USER:-hotel}
+      DB_PASSWORD: ${DB_PASSWORD:-change-this-database-password}
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-8}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-change-this-redis-password}
+      REDIS_CACHE_ENABLED: ${REDIS_CACHE_ENABLED:-true}
+      REDIS_TIMEOUT_MS: ${REDIS_TIMEOUT_MS:-250}
+      HOTEL_CACHE_TTL_SECONDS: ${HOTEL_CACHE_TTL_SECONDS:-30}
+      HOTEL_CACHE_MAX_ENTRIES: ${HOTEL_CACHE_MAX_ENTRIES:-1000}
+      EVENTS_ENABLED: ${EVENTS_ENABLED:-true}
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USER: ${RABBITMQ_USER:-ashkan}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-change-this-local-password}
+    ports: ["127.0.0.1:8094:8094"]
+    volumes: ["inventory_data:/app/data"]
+    depends_on:
+      otel-collector: {condition: service_started}
+      rabbitmq: {condition: service_healthy}
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    restart: unless-stopped
+
+  api-gateway:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.service
+    command: ["com.ashkan.hotel.HotelEdgeGateway"]
+    environment:
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://otel-collector:4318/v1/traces
+      GATEWAY_PORT: 8080
+      SERVICE_DOCKER_NETWORK: "true"
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+      AUTH_DATA_DIR: /app/data/auth
+    ports: ["8080:8080"]
+    volumes: ["gateway_auth_data:/app/data/auth"]
+    depends_on:
+      otel-collector: {condition: service_started}
+      booking-service: {condition: service_started}
+      payment-service: {condition: service_started}
+      guest-service: {condition: service_started}
+      inventory-service: {condition: service_started}
+    restart: unless-stopped
+
+  notification-service:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.service
+    command: ["com.ashkan.hotel.NotificationHttpService", "8089"]
+    environment:
+      HTTP_BIND_HOST: 0.0.0.0
+    ports: ["8089:8089"]
+    volumes: ["notification_data:/home/hotel/.ashkan-hotelsphere"]
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: ashkan-hotel-prometheus
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/prometheus", "--storage.tsdb.retention.time=15d"]
+    ports: ["127.0.0.1:9090:9090"]
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    depends_on:
+      - api-gateway
+      - booking-service
+      - payment-service
+      - guest-service
+      - inventory-service
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: ashkan-hotel-grafana
+    ports: ["127.0.0.1:3000:3000"]
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-change-this-grafana-password}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.62.0
+    container_name: ashkan-hotel-jaeger
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+      SPAN_STORAGE_TYPE: memory
+    ports:
+      - "127.0.0.1:16686:16686"
+    restart: unless-stopped
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.110.0
+    container_name: ashkan-hotel-otel-collector
+    command: ["--config=/etc/otelcol/config.yaml"]
+    ports:
+      - "127.0.0.1:4318:4318"
+      - "127.0.0.1:4317:4317"
+    volumes:
+      - ./otel/collector-config.yaml:/etc/otelcol/config.yaml:ro
+    restart: unless-stopped
+
+volumes:
+  redis_data:
+  postgres_data:
+  gateway_auth_data:
+  rabbitmq_data:
+  booking_data:
+  payment_data:
+  guest_data:
+  inventory_data:
+  notification_data:
+  prometheus_data:
+  grafana_data:

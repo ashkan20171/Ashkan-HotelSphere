@@ -1,0 +1,15 @@
+{
+  "uid": "hotelsphere-overview",
+  "title": "Ashkan HotelSphere - Microservices Overview",
+  "tags": ["hotelsphere", "microservices"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "15s",
+  "panels": [
+    {"id": 1, "type": "timeseries", "title": "HTTP Requests / second", "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}, "targets": [{"expr": "sum by (service) (rate(hotelsphere_http_requests_total[5m]))", "legendFormat": "{{service}}"}], "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}},
+    {"id": 2, "type": "timeseries", "title": "Request Duration (ms, 5m avg)", "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}, "targets": [{"expr": "sum by (service) (rate(hotelsphere_http_request_duration_milliseconds_sum[5m])) / clamp_min(sum by (service) (rate(hotelsphere_http_requests_total[5m])), 0.001)", "legendFormat": "{{service}}"}], "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}},
+    {"id": 3, "type": "timeseries", "title": "In-flight Requests", "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8}, "targets": [{"expr": "hotelsphere_http_in_flight_requests", "legendFormat": "{{service}}"}], "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}},
+    {"id": 4, "type": "timeseries", "title": "Request Failures", "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8}, "targets": [{"expr": "sum by (service) (rate(hotelsphere_http_request_failures_total[5m]))", "legendFormat": "{{service}}"}], "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}}
+  ]
+}

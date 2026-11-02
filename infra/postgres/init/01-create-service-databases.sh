@@ -1,0 +1,6 @@
+#!/bin/sh
+set -eu
+for db in ashkan_booking ashkan_payment ashkan_guest ashkan_inventory; do
+  psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" -tc "SELECT 1 FROM pg_database WHERE datname = '$db'" | grep -q 1 || \
+    psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" -c "CREATE DATABASE $db OWNER $POSTGRES_USER"
+done

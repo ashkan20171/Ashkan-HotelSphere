@@ -1,0 +1,4 @@
+package com.ashkan.hotel;
+import java.nio.charset.StandardCharsets;import java.util.Base64;
+/** Null-safe compact field codec for Redis cache values; fields are independently Base64 encoded. */
+final class CacheCodec {private CacheCodec(){} static String pack(String... values){StringBuilder b=new StringBuilder();for(int i=0;i<values.length;i++){if(i>0)b.append('.');String v=values[i];b.append(v==null?"~":Base64.getUrlEncoder().withoutPadding().encodeToString(v.getBytes(StandardCharsets.UTF_8)));}return b.toString();}static String[] unpack(String value,int expected){String[] p=value.split("\\.",-1);if(p.length!=expected)throw new IllegalArgumentException("Invalid cache payload");String[] out=new String[p.length];for(int i=0;i<p.length;i++)out[i]=p[i].equals("~")?null:new String(Base64.getUrlDecoder().decode(p[i]),StandardCharsets.UTF_8);return out;}}
